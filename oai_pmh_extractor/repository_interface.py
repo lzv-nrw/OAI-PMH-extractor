@@ -158,12 +158,63 @@ class RepositoryInterface():
             list_of_prefixes.append(metadata_format["metadataPrefix"])
         return list_of_prefixes
 
+    def list_identifiers_exhaustive_multiple_sets(
+        self,
+        metadata_prefix: str,
+        _from: Optional[str] = None,
+        _until: Optional[str] = None,
+        _set_spec: Optional[list[str]] = None,
+        _max_resumption_tokens: Optional[int] = None,
+    ) -> list[str]:
+        """
+        Calls `list_identifiers_exhaustive` repeatedly to retrieve identifiers
+        from multiple sets (logical OR).
+
+        Returns a list of unique identifiers as strings.
+
+        Keyword arguments:
+        metadata_prefix -- required argument for oai-pmh; only identifiers
+                           are listed that can satisfy the given format
+        _from -- lower datestamp in daterange for selective harvest
+                 (default None)
+        _until -- upper datestamp in daterange for selective harvest
+                  (default None)
+        _set_spec -- list of set memberships; each element as
+                     colon-separated list of path in set hierarchy
+                     (default None)
+        _max_resumption_tokens -- maximum number of processed resumption tokens;
+                                  only considered when positive
+                                  (default None leads to no restriction)
+        """
+
+        identifiers = []
+        if _set_spec is not None:
+            for _set in _set_spec:
+                identifiers_ = self.list_identifiers_exhaustive(
+                    metadata_prefix=metadata_prefix,
+                    _from=_from,
+                    _until=_until,
+                    _set_spec=_set,
+                    _max_resumption_tokens=_max_resumption_tokens,
+                )
+                identifiers.extend(identifiers_)
+
+            return list(set(identifiers))
+        return self.list_identifiers_exhaustive(
+            metadata_prefix=metadata_prefix,
+            _from=_from,
+            _until=_until,
+            _set_spec=_set_spec,
+            _max_resumption_tokens=_max_resumption_tokens,
+        )
+
     def list_identifiers_exhaustive(
         self,
         metadata_prefix: str,
         _from: Optional[str] = None,
         _until: Optional[str] = None,
-        _set_spec: Optional[str] = None
+        _set_spec: Optional[str] = None,
+        _max_resumption_tokens: Optional[int] = None,
     ) -> list[str]:
         """
         Issue repository server with repeated `ListIdentifiers`-requests
@@ -172,18 +223,22 @@ class RepositoryInterface():
         Returns a list of identifiers as strings.
 
         Keyword arguments:
-        _metadata_prefix -- required argument for oai-pmh; only identifiers
-                            are listed that can satisfy the given format
+        metadata_prefix -- required argument for oai-pmh; only identifiers
+                           are listed that can satisfy the given format
         _from -- lower datestamp in daterange for selective harvest
                  (default None)
         _until -- upper datestamp in daterange for selective harvest
                   (default None)
         _set_spec -- colon-separated list of path in set hierarchy
                      (default None)
+        _max_resumption_tokens -- maximum number of processed resumption tokens;
+                                  only considered when positive
+                                  (default None leads to no restriction)
         """
 
         identifiers = []
         token = None
+        tokens_count = 0
         while True:  # iterate until no resumption token is given
             identifiers_, token = self.list_identifiers(
                 _metadata_prefix=metadata_prefix,
@@ -195,6 +250,15 @@ class RepositoryInterface():
             identifiers.extend(identifiers_)
             if token is None:
                 break
+            tokens_count += 1
+            if (
+                _max_resumption_tokens is not None
+                and tokens_count > _max_resumption_tokens > 0
+            ):
+                raise OverflowError(
+                    "Maximum number of resumption tokens exceeded "
+                    + f"({_max_resumption_tokens})."
+                )
 
         return identifiers
 

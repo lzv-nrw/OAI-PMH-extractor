@@ -1,13 +1,14 @@
 from setuptools import setup
 
 setup(
-    version="3.0.0",
+    version="3.4.0",
     name="oai-pmh-extractor",
     description="harvest metadata and extract payload via an OAI-PMH interface",
     author="LZV.nrw",
     install_requires=[
         "requests==2.*",
         "xmltodict==0.*",
+        "lxml==5.*",
         "dcm-common>=3.0.0,<4.0.0",
     ],
     packages=[

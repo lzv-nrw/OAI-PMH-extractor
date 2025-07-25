@@ -1,5 +1,18 @@
 # Changelog
 
+## [3.4.0] - 2025-07-25
+
+### Added
+
+- added optional `_max_resumption_tokens` argument to `list_identifiers_exhaustive` and `list_identifiers_exhaustive_multiple_sets` methods of `RepositoryInterface` class
+- added method `list_identifiers_exhaustive_multiple_sets` to support multiple sets
+- added `filter_by_regex_with_xpath_query` in `TransferUrlFilters` class
+- added `transfer_url_filters` keyword argument in `PayloadCollector` class
+
+### Fixed
+
+- improved logging-behavior of `PayloadCollector`
+
 ## [3.0.0] - 2024-09-05
 
 ### Changed

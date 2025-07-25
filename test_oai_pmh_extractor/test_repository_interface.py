@@ -324,7 +324,51 @@ def test_list_identifiers_parameterized(
         simple_interface._build_request.assert_called_once_with(**request_options)
 
 
-def test_list_identifiers_exhaustive(simple_interface, generate_FakeRequestsResponse):
+@pytest.mark.parametrize(
+    ("_set_spec", "expected_result", "expected_calls"),
+    [
+        (["set1", "set2", "set3"], ["1", "2", "3"], 3),
+        (None, ["1"], 1),
+        ([], [], 0),
+    ],
+    ids=["multiple sets", "none", "empty list"]
+)
+def test_list_identifiers_exhaustive_multiple_sets(
+    simple_interface, _set_spec, expected_result, expected_calls
+):
+    """
+    Test method `list_identifiers_exhaustive_multiple_sets`
+    of `RepositoryInterface`.
+    """
+
+    counter = [0]  # non-primitive type to enable use in fake function
+    def fake_list_identifiers_exhaustive(_set_spec, *args, **kwargs):
+        if counter[0] < 3:
+            counter[0] = counter[0] + 1
+            return [str(i) for i in range(1, counter[0]+1)]
+        return []
+
+    with mock.patch.object(
+        simple_interface,
+        "list_identifiers_exhaustive",
+        side_effect=fake_list_identifiers_exhaustive
+    ):
+        identifiers = (
+            simple_interface.list_identifiers_exhaustive_multiple_sets(
+                metadata_prefix="y", _set_spec=_set_spec
+            )
+        )
+        assert sorted(identifiers) == expected_result
+        assert (
+            simple_interface.list_identifiers_exhaustive.call_count
+            == expected_calls
+        )
+
+
+def test_list_identifiers_exhaustive(
+    simple_interface,
+    generate_FakeRequestsResponse
+):
     """
     Test method `list_identifiers_exhaustive` of `RepositoryInterface`.
     """
@@ -808,3 +852,50 @@ def test_interface_timeout(latency, request):
             some_repository_interface.identify()
     else:
         assert some_repository_interface.identify() == expected_response_dict
+
+
+@pytest.mark.parametrize(
+    ("max_resumption_tokens", "error_expected"),
+    [
+        (-2, False),
+        (-1, False),
+        (0, False),
+        (None, False),
+        (1, True),  # error_expected
+        (2, False),
+    ]
+)
+def test_list_identifiers_exhaustive__max_resumption_tokens(
+    simple_interface,
+    generate_FakeRequestsResponse,
+    max_resumption_tokens,
+    error_expected,
+):
+    """
+    Test method `list_identifiers_exhaustive` of `RepositoryInterface`
+    with the argument `_max_resumption_tokens`.
+    """
+
+    max_counter = 2
+
+    counter = [0]  # non-primitive type to enable use in fake function
+    def fake_list_identifiers(_resumption_token, *args, **kwargs):
+        if counter[0] < max_counter:
+            counter[0] = counter[0] + 1
+            return [str(counter[0])], "x"
+        return [], None
+
+    with mock.patch.object(
+        simple_interface, "list_identifiers", side_effect=fake_list_identifiers
+    ):
+        if not error_expected:
+            assert simple_interface.list_identifiers_exhaustive(
+                metadata_prefix="y",
+                _max_resumption_tokens=max_resumption_tokens,
+            ) == ["1", "2"]
+        else:
+            with pytest.raises(OverflowError):
+                simple_interface.list_identifiers_exhaustive(
+                    metadata_prefix="y",
+                    _max_resumption_tokens=max_resumption_tokens,
+                )

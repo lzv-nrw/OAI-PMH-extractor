@@ -3,7 +3,7 @@ This module contains the definition of a record-class storing information
 regarding a single OAIPMH-item (identifier, metadata, ..).
 """
 
-from typing import TypedDict, Optional
+from typing import TypedDict, Optional, Iterable
 from hashlib import md5
 from pathlib import Path
 
@@ -58,7 +58,7 @@ class OAIPMHRecord():
             self.register_files_by_url(file_urls)
         self._complete = False
 
-    def register_files_by_url(self, file_urls: list[str]) -> None:
+    def register_files_by_url(self, file_urls: Iterable[str]) -> None:
         """
         Generate templates for File-dictionaries based on list of urls.
 

@@ -42,7 +42,8 @@ class TransferUrlFilters:
             urls = []
             matches = findall(regex, source_metadata)
             if matches is not None:
-                urls.extend(matches)
+                # reject empty matches
+                urls.extend(list(filter(None, matches)))
             return urls
 
         return _
@@ -79,7 +80,56 @@ class TransferUrlFilters:
                     if x is not None:
                         matches = findall(regex, x)
                         if matches is not None:
-                            urls.extend(matches)
+                            # reject empty matches
+                            urls.extend(list(filter(None, matches)))
+            return urls
+
+        return _
+
+    @staticmethod
+    def filter_by_regex_with_xpath_query(
+        regex: str,
+        path: str,
+    ) -> Callable[[Optional[str]], list[str]]:
+        """
+        Returns filter based on regex acting on data
+        at given xpath (`path` kwarg) in source metadata xml.
+
+        Keyword arguments:
+        regex -- regex for filtering
+        path -- xpath query
+        """
+
+        from re import findall
+        import xml.etree.ElementTree as ET
+        from io import BytesIO
+
+        from lxml import etree
+
+        def _(source_metadata: Optional[str]) -> list[str]:
+            if source_metadata is None:
+                return []
+            urls = []
+
+            # Get the namespaces
+            context = etree.parse(BytesIO(str.encode(source_metadata)))
+            nsmap = {}
+            for ns in context.xpath("//namespace::*"):
+                if ns[0] not in nsmap:
+                    nsmap["" if ns[0] is None else ns[0]] = ns[1]
+
+            # use xml library with xpath_query
+            # (lxml supports no empty namespace prefix in XPath)
+            metadata_elements = ET.ElementTree(
+                ET.fromstring(source_metadata)
+            ).findall(path, nsmap)
+
+            for x in metadata_elements:
+                if x.text is not None:
+                    matches = findall(regex, x.text)
+                    if matches is not None:
+                        # reject empty matches
+                        urls.extend(list(filter(None, matches)))
             return urls
 
         return _
@@ -91,19 +141,37 @@ class PayloadCollector():
     a metadata dictionary and download to the local filesystem.
 
     Keyword arguments:
-    transfer_url_filter -- callable taking source metadata and returning
-                           list of transfer urls
+    transfer_url_filter -- callable taking source metadata
+                           and returning list of transfer urls;
+                           mutually exclusive with `transfer_url_filters`
     timeout -- timeout duration for remote repository in seconds; None
                indicates not timing out
                (default 10)
+    transfer_url_filters -- list of callables taking source metadata
+                            and returning list of transfer urls
     """
 
     def __init__(
         self,
-        transfer_url_filter: Callable[[Optional[str]], list[str]],
-        timeout: Optional[float] = 10
+        transfer_url_filter: Optional[
+            Callable[[Optional[str]], list[str]]
+        ] = None,
+        timeout: Optional[float] = 10,
+        transfer_url_filters: Optional[
+            list[Callable[[Optional[str]], list[str]]]
+        ] = None,
     ) -> None:
-        self._transfer_url_filter = transfer_url_filter
+        exclusive_kwargs = [transfer_url_filters, transfer_url_filter]
+        if all(exclusive_kwargs) or not any(exclusive_kwargs):
+            raise TypeError(
+                "Cannot instantiate 'PayloadCollector' with given args. "
+                + "Exactly one of the kwargs 'transfer_url_filters' and "
+                + "'transfer_url_filter' has to be specified."
+            )
+        if transfer_url_filters is not None:
+            self._transfer_url_filters = transfer_url_filters
+        if transfer_url_filter is not None:
+            self._transfer_url_filters = [transfer_url_filter]
         self._timeout = timeout
         self.log: Logger = Logger(default_origin="Payload Collector")
 
@@ -190,9 +258,47 @@ class PayloadCollector():
         # list/None in record.files
         if renew_urls or not record.files:
             record.files = []
-            record.register_files_by_url(
-                self._transfer_url_filter(record.metadata_raw)
-            )
+            urls = []
+            for idx, transfer_url_filter in enumerate(
+                self._transfer_url_filters
+            ):
+                try:
+                    urls += transfer_url_filter(record.metadata_raw)
+                except SyntaxError as exc_info:
+                    if "not found in prefix map" in str(exc_info):
+                        self.log.log(
+                            Context.ERROR,
+                            body=(
+                                f"Failed to generate url with filter {idx}. "
+                                + "XPath contains unknown namespace: "
+                                + f"{exc_info}."
+                            )
+                        )
+                    else:
+                        raise exc_info
+
+            # remove duplicate urls
+            url_set = set(urls)
+
+            if len(url_set) > 0:
+                self.log.log(
+                    Context.INFO,
+                    body=(
+                        f"Filter on '{record.identifier}'-metadata returned "
+                        + "the following urls: "
+                        + ", ".join(map(lambda s: f"'{s.strip()}'", url_set))
+                    )
+                )
+            else:
+                self.log.log(
+                    Context.WARNING,
+                    body=(
+                        "Got no payload-urls from metadata of "
+                        + f"'{record.identifier}'."
+                    )
+                )
+
+            record.register_files_by_url(url_set)
 
         # exit if skipped download
         if skip_download:

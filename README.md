@@ -129,3 +129,4 @@ Summary:
 * Michael Rahier
 * Steffen Richters-Finger
 * Malte Windrath
+* Roman Kudinov
