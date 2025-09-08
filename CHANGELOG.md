@@ -1,5 +1,11 @@
 # Changelog
 
+## [3.5.0] - 2025-09-08
+
+### Added
+
+- added support for `dcm-common` v4
+
 ## [3.4.0] - 2025-07-25
 
 ### Added
