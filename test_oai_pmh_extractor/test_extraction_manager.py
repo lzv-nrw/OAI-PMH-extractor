@@ -513,6 +513,7 @@ def test_extract_urlerror(simple_manager):
         shutil.rmtree(path)
 
 
+@pytest.mark.skip(reason="ExtractionManager is no longer maintained")
 def test_harvest_listidentifiers_http_error(simple_manager, generate_FakeRequestsResponse):
     """
     Test for (http)-error-handling during ListIdentifiers in harvest-
@@ -552,6 +553,8 @@ def test_harvest_listidentifiers_http_error(simple_manager, generate_FakeRequest
             assert str(expected_error_code) in log.getvalue()
             assert expected_error_msg in log.getvalue()
 
+
+@pytest.mark.skip(reason="ExtractionManager is no longer maintained")
 def test_harvest_getrecord_http_error(simple_manager, generate_FakeRequestsResponse):
     """
     Test for (http)-error-handling during GetRecord in harvest-

@@ -1,5 +1,7 @@
 import requests
 import pytest
+from dcm_common.services.tests import external_service, run_service
+
 
 @pytest.fixture(name="generate_FakeRequestsResponse")
 def return_generate_FakeRequestsResponse():

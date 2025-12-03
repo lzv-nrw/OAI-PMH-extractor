@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.6.0] - 2025-12-03
+
+### Added
+
+- added configurable retry-mechanism for `RepositoryInterface` and `PayloadCollector` in case of failed fetch/download
+- added logging for `RepositoryInterface` and `PayloadCollector` in case of failed fetch/download
+
 ## [3.5.0] - 2025-09-08
 
 ### Added

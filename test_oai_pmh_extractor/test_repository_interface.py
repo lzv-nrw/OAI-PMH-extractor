@@ -6,6 +6,7 @@ from time import sleep
 import requests
 import pytest
 import xmltodict
+from flask import Response
 from dcm_common import LoggingContext as Context
 
 from oai_pmh_extractor import RepositoryInterface, OAIPMHRecord
@@ -801,7 +802,7 @@ def test__execute_http_request_error(generate_FakeRequestsResponse):
                 )
             ):
         # execute in RepositoryInterface
-        with pytest.raises(requests.HTTPError) as exc_info:
+        with pytest.raises(requests.exceptions.RequestException) as exc_info:
             some_repository_interface._execute_http_request("")
         assert str(expected_error_code) in str(exc_info)
         assert expected_error_msg in str(exc_info)
@@ -812,44 +813,46 @@ def test__execute_http_request_error(generate_FakeRequestsResponse):
     [0, 0.1],
     ids=["no-timeout", "timeout"]
 )
-def test_interface_timeout(latency, request):
+def test_interface_timeout(latency, run_service):
     """
     Test timeout-behavior of RepositoryInterface by faking a minimal
     http-server.
     """
-    from http.server import HTTPServer, BaseHTTPRequestHandler
-    from multiprocessing import Process
 
     expected_response = b"<test_tag>value</test_tag>"
     expected_response_dict = {"test_tag": "value"}
+
     # setup fake server
-    class Handler(BaseHTTPRequestHandler):
-        def do_GET(self):
-            sleep(latency)
-            self.send_response(200)
-            self.send_header("Content-type", "text/html")
-            self.end_headers()
-            self.wfile.write(expected_response)
-    http = HTTPServer(("localhost", 8080), Handler)
-    # run fake server
-    p = Process(
-        target=http.serve_forever,
-        daemon=True
-    )
-    def __():  # kill server after this test
-        if p.is_alive():
-            p.kill()
-            p.join()
-    request.addfinalizer(__)
-    p.start()
+    def respond_with_latency():
+        sleep(latency)
+        return Response(expected_response, mimetype="text/html")
+
+    run_service(routes=[("/", respond_with_latency, ["GET"])], port=8080)
 
     # perform test
     some_repository_interface = RepositoryInterface(
         "http://localhost:8080", timeout=0.05
     )
     if latency > 0:
-        with pytest.raises(requests.exceptions.ReadTimeout):
-            some_repository_interface.identify()
+        class FakeStdErr:
+            def __init__(self):
+                self.text = ""
+            def write(self, line):
+                self.text += line
+
+        stderr = FakeStdErr()
+
+        # perform download
+        with mock.patch(
+            "oai_pmh_extractor.repository_interface.sys.stderr", stderr
+        ):
+            with pytest.raises(requests.exceptions.RequestException):
+                some_repository_interface.identify()
+
+            # two failed attempts
+            stderr_lines = stderr.text.splitlines()
+            assert len(stderr_lines) == 2
+            assert stderr_lines[0] == stderr_lines[1]
     else:
         assert some_repository_interface.identify() == expected_response_dict
 

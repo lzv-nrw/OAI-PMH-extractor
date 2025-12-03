@@ -12,8 +12,10 @@ collection of filter factories:
 """
 
 from typing import Optional, Callable
+import sys
 from pathlib import Path
 from urllib import request, parse
+from time import sleep
 
 from dcm_common.util import value_from_dict_path
 from dcm_common import LoggingContext as Context, Logger
@@ -149,6 +151,12 @@ class PayloadCollector():
                (default 10)
     transfer_url_filters -- list of callables taking source metadata
                             and returning list of transfer urls
+    max_retries -- maximum number of retries for downloading a file
+                   (default 1)
+    retry_interval -- interval between retries in seconds
+                      (default 1)
+    retry_on_http_status -- http status codes for which retries should be made
+                            (default None, uses: [429, 503])
     """
 
     def __init__(
@@ -160,6 +168,9 @@ class PayloadCollector():
         transfer_url_filters: Optional[
             list[Callable[[Optional[str]], list[str]]]
         ] = None,
+        max_retries: int = 1,
+        retry_interval: float = 1.0,
+        retry_on_http_status: Optional[list[int]] = None,
     ) -> None:
         exclusive_kwargs = [transfer_url_filters, transfer_url_filter]
         if all(exclusive_kwargs) or not any(exclusive_kwargs):
@@ -173,6 +184,13 @@ class PayloadCollector():
         if transfer_url_filter is not None:
             self._transfer_url_filters = [transfer_url_filter]
         self._timeout = timeout
+        self.max_retries = max_retries
+        self.retry_interval = retry_interval
+        self.retry_on_http_status = (
+            [429, 503]
+            if retry_on_http_status is None
+            else retry_on_http_status
+        )
         self.log: Logger = Logger(default_origin="Payload Collector")
 
     def download_file(
@@ -191,42 +209,70 @@ class PayloadCollector():
                      (default None)
         """
 
-        # make request (raises URLError if not successful)
-        with request.urlopen(url, timeout=self._timeout) as response:
-            filename = _filename
-            # check for filename provided by header
-            if filename is None:
-                filename_from_info = response.info().get_filename()
-                if filename_from_info is not None:
-                    filename = Path(filename_from_info)
-            # check for filename in url
-            if filename is None:
-                filename = Path(
-                    Path(
-                        parse.unquote(parse.urlparse(response.url).path)
-                    ).name
+        exc_info = None
+        for retry in range(self.max_retries + 1):
+            try:
+                with request.urlopen(url, timeout=self._timeout) as response:
+                    filename = _filename
+                    # check for filename provided by header
+                    if filename is None:
+                        filename_from_info = response.info().get_filename()
+                        if filename_from_info is not None:
+                            filename = Path(filename_from_info)
+                    # check for filename in url
+                    if filename is None:
+                        filename = Path(
+                            Path(
+                                parse.unquote(
+                                    parse.urlparse(response.url).path
+                                )
+                            ).name
+                        )
+
+                    # mypy-hint
+                    assert filename is not None
+
+                    # make "sure" nothing is overwritten
+                    for i in range(0, 10):
+                        if i == 9:
+                            msg = (
+                                "Cannot find valid filename for requested "
+                                + f"file with url '{response.url}'."
+                            )
+                            self.log.log(Context.ERROR, body=msg)
+                            raise FileExistsError(msg)
+                        if not (path / filename).is_file():
+                            break
+                        filename.with_name(
+                            filename.stem + f"_{i}" + path.suffix
+                        )
+
+                    # write file
+                    (path / filename).write_bytes(response.read())
+                    return path / filename
+            except request.HTTPError as _exc_info:
+                msg = (
+                    "PayloadCollector encountered an error while requesting "
+                    + f"'{url}' (downloading to '{path}'): {_exc_info}"
                 )
-
-            # mypy-hint
-            assert filename is not None
-
-            # make "sure" nothing is overwritten
-            for i in range(0, 10):
-                if i == 9:
-                    msg = "Cannot find valid filename for requested file with " \
-                        + f"url '{response.url}'."
-                    self.log.log(
-                        Context.ERROR,
-                        body=msg
-                    )
-                    raise FileExistsError(msg)
-                if not (path / filename).is_file():
+                self.log.log(Context.ERROR, body=msg)
+                print(msg, file=sys.stderr)
+                exc_info = _exc_info
+                if exc_info.code not in self.retry_on_http_status:
                     break
-                filename.with_name(filename.stem + f"_{i}" + path.suffix)
-
-            # write file
-            (path / filename).write_bytes(response.read())
-            return path / filename
+                if retry < self.max_retries:
+                    sleep(self.retry_interval)
+            except request.URLError as _exc_info:
+                msg = (
+                    "PayloadCollector encountered an error while requesting "
+                    + f"'{url}' (downloading to '{path}'): {_exc_info}"
+                )
+                self.log.log(Context.ERROR, body=msg)
+                print(msg, file=sys.stderr)
+                exc_info = _exc_info
+                if retry < self.max_retries:
+                    sleep(self.retry_interval)
+        raise exc_info
 
     def download_record_payload(
         self,

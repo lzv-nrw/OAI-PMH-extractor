@@ -5,9 +5,10 @@ from time import sleep
 import shutil
 from urllib import request
 from unittest import mock
+from uuid import uuid4
 
 import pytest
-
+from flask import Response
 from dcm_common import LoggingContext as Context
 
 from oai_pmh_extractor import (
@@ -916,12 +917,47 @@ def test_download_file_file_url(simple_payload_collector):
         shutil.rmtree(TEST_DIRECTORY)
 
 
+def test_download_file_url_error(simple_payload_collector):
+    """
+    Test method download_file of PayloadCollector class with url-error.
+    """
+    # pre-test cleanup
+    if TEST_DIRECTORY.is_dir():
+        shutil.rmtree(TEST_DIRECTORY)
+    TEST_DIRECTORY.mkdir(parents=True)
+
+    class FakeStdErr:
+        def __init__(self):
+            self.text = ""
+        def write(self, line):
+            self.text += line
+
+    stderr = FakeStdErr()
+
+    # perform download
+    with mock.patch("oai_pmh_extractor.payload_collector.sys.stderr", stderr):
+        with pytest.raises(request.URLError):
+            simple_payload_collector.download_file(
+                TEST_DIRECTORY / str(uuid4()),
+                "file://" + str(uuid4())
+            )
+
+        # two failed attempts
+        stderr_lines = stderr.text.splitlines()
+        assert len(stderr_lines) == 2
+        assert stderr_lines[0] == stderr_lines[1]
+
+    # post-test cleanup
+    if TEST_DIRECTORY.is_dir():
+        shutil.rmtree(TEST_DIRECTORY)
+
+
 @pytest.mark.parametrize(
     "latency",
     [0, 0.1],
     ids=["no-timeout", "timeout"]
 )
-def test_payload_collector_timeout(latency, request):
+def test_payload_collector_timeout(latency, run_service):
     """
     Test timeout-behavior of PayloadCollector by faking a minimal
     http-server.
@@ -931,31 +967,15 @@ def test_payload_collector_timeout(latency, request):
         shutil.rmtree(TEST_DIRECTORY)
     TEST_DIRECTORY.mkdir(parents=True)
 
-    from http.server import HTTPServer, BaseHTTPRequestHandler
-    from multiprocessing import Process
-
     expected_response = b"data"
     filename = Path("timeout-test.txt")
+
     # setup fake server
-    class Handler(BaseHTTPRequestHandler):
-        def do_GET(self):
-            sleep(latency)
-            self.send_response(200)
-            self.send_header("Content-type", "text/html")
-            self.end_headers()
-            self.wfile.write(expected_response)
-    http = HTTPServer(("localhost", 8080), Handler)
-    # run fake server
-    p = Process(
-        target=http.serve_forever,
-        daemon=True
-    )
-    def __():  # kill server after this test
-        if p.is_alive():
-            p.kill()
-            p.join()
-    request.addfinalizer(__)
-    p.start()
+    def respond_with_latency():
+        sleep(latency)
+        return Response(expected_response, mimetype="text/html")
+
+    run_service(routes=[("/", respond_with_latency, ["GET"])], port=8080)
 
     # perform test
     def transfer_url_filter(source_metadata):

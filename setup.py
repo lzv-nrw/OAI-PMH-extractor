@@ -2,7 +2,7 @@ from setuptools import setup
 
 
 setup(
-    version="3.5.0",
+    version="3.6.0",
     name="oai-pmh-extractor",
     description="harvest metadata and extract payload via an OAI-PMH interface",
     author="LZV.nrw",

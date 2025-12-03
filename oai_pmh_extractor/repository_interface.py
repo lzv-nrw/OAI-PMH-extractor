@@ -7,6 +7,8 @@ ExtractionManager class defined in `extraction_manager.py`.
 """
 
 from typing import Optional
+import sys
+from time import sleep
 
 import requests
 import xmltodict
@@ -26,6 +28,12 @@ class RepositoryInterface():
     timeout -- timeout duration for remote repository in seconds; None
                indicates not timing out
                (default 10)
+    max_retries -- maximum number of retries for fetches
+                   (default 1)
+    retry_interval -- interval between retries in seconds
+                      (default 1)
+    retry_on_http_status -- http status codes for which retries should be made
+                            (default None, uses: [429, 503])
     """
 
     # define available arguments for selective harvest
@@ -40,10 +48,20 @@ class RepositoryInterface():
     def __init__(
         self,
         base_url: str,
-        timeout: Optional[float] = 10
+        timeout: Optional[float] = 10,
+        max_retries: int = 1,
+        retry_interval: float = 1.0,
+        retry_on_http_status: Optional[list[int]] = None,
     ) -> None:
         self._base_url = base_url
         self._timeout = timeout
+        self.max_retries = max_retries
+        self.retry_interval = retry_interval
+        self.retry_on_http_status = (
+            [429, 503]
+            if retry_on_http_status is None
+            else retry_on_http_status
+        )
 
         self.preserve_log = False
         self.log = Logger(default_origin="OAI Repository Interface")
@@ -76,10 +94,29 @@ class RepositoryInterface():
 
         Return response as utf-8-encoded string.
         """
-
-        response = requests.get(request_url, timeout=self._timeout)
-        response.raise_for_status()
-        return response.content.decode("utf-8")
+        exc_info = None
+        for retry in range(self.max_retries + 1):
+            try:
+                response = requests.get(request_url, timeout=self._timeout)
+                response.raise_for_status()
+                return response.content.decode("utf-8")
+            except requests.exceptions.RequestException as _exc_info:
+                msg = (
+                    "RepositoryInterface encountered an error while "
+                    + f"requesting '{request_url}': {_exc_info}"
+                )
+                self.log.log(Context.ERROR, body=msg)
+                print(msg, file=sys.stderr)
+                exc_info = _exc_info
+                if (
+                    _exc_info.response is not None
+                    and _exc_info.response.status_code
+                    not in self.retry_on_http_status
+                ):
+                    break
+                if retry < self.max_retries:
+                    sleep(self.retry_interval)
+        raise exc_info
 
     def _check_for_oaipmh_errors(self, response: NestedDict) -> bool:
         if value_from_dict_path(response, ["OAI-PMH", "error"]) is not None:
